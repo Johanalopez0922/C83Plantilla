@@ -8,7 +8,6 @@ import {
   ImageBackground,
   Image,
   Alert,
-  ToastAndroid,
   KeyboardAvoidingView,
 } from "react-native";
 import * as Permissions from "expo-permissions";
