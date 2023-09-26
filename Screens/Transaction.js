@@ -9,6 +9,7 @@ import {
   Image,
   Alert,
   KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import * as Permissions from "expo-permissions";
 import { BarCodeScanner } from "expo-barcode-scanner";
@@ -70,32 +71,41 @@ export default class TransactionScreen extends Component {
     await this.getStudentDetails(studentId);
 
     var transactionType = await this.checkBookAvailability(bookId);
-
+    console.log(transactionType);
     if (!transactionType) {
-      this.setState({ bookId: "", studentId: "" });
-      // Solo para usuario Android
-      //  ToastAndroid.show("El libro no se encuentra en la base de datos de la biblioteca", ToastAndroid.SHORT);
-      Alert.alert(
-        "El libro no se encuentra en la base de datos de la bibliotec"
+      if (Platform.OS === "web") {
+        alert("No hay libros disponibles para esta persona");
+      }
+      Alert.alert("El libro no se encuentra en la base de datos");
+      this.setState({
+        bookId: "",
+        studentId: "",
+      });
+    } else if (transactionType == "issue") {
+      var isEligible = await this.checkStudentEligibilityForBookIssue(
+        studentId
       );
-    } else if (transactionType === "issue") {
-      var { bookName, studentName } = this.state;
-      this.initiateBookIssue(bookId, studentId, bookName, studentName);
 
-      // Solo para usuario Android
-      //  ToastAndroid.show("Libro emitido al alumno", ToastAndroid.SHORT);
+      if (isEligible) {
+        var { bookName, studentName } = this.state;
+        this.initiateBookIssue(bookId, studentId, bookName, studentName);
+      }
 
-      Alert.alert("Libro emitido al alumno");
+      if (Platform.OS === "web") {
+        alert("Libro prestado", "Se ha realizado el préstamo correctamente");
+      }
+      Alert.alert("Libro prestado al Estudiante!");
     } else {
-      var { bookName, studentName } = this.state;
-      this.initiateBookReturn(bookId, studentId, bookName, studentName);
+      var isEligible = await this.checkStudentEligibilityForBookReturn(bookId, studentId);
 
-      // Solo para usuarios Android
-      /*   ToastAndroid.show(
-            "Libro devuelto a la biblioteca",
-            ToastAndroid.SHORT
-          );*/
+      if (isEligible) {
+        var { bookName, studentName } = this.state;
+        this.initiateBookReturn(bookId, studentId, bookName, studentName);
+      }
 
+      if (Platform.OS === "web") {
+        alert("Libro devuelto");
+      }
       Alert.alert("Libro devuelto a la biblioteca");
     }
   };
@@ -128,26 +138,6 @@ export default class TransactionScreen extends Component {
       });
   };
 
-  checkBookAvailability = async (bookId) => {
-    const bookRef = await db
-      .collection("books")
-      .where("book_id", "==", bookId)
-      .get();
-
-    var transactionType = "";
-    if (bookRef.docs.length == 0) {
-      transactionType = false;
-    } else {
-      bookRef.docs.map((doc) => {
-        //si el libro está disponible, el tipo de transacción será issue
-        // de lo contrario será return
-        transactionType = doc.data().is_book_available ? "issue" : "return";
-      });
-    }
-
-    return transactionType;
-  };
-
   initiateBookIssue = async (bookId, studentId, bookName, studentName) => {
     //añade una transacción
     db.collection("transactions").add({
@@ -169,7 +159,7 @@ export default class TransactionScreen extends Component {
         number_of_books_issued: firebase.firestore.FieldValue.increment(1),
       });
 
-    // Actualizar local state
+    // Actualiza local state
     this.setState({
       bookId: "",
       studentId: "",
@@ -204,6 +194,94 @@ export default class TransactionScreen extends Component {
     });
   };
 
+  checkBookAvailability = async (bookId) => {
+    console.log(Alert);
+    const bookRef = await db
+      .collection("books")
+      .where("book_id", "==", bookId)
+      .get();
+
+    var transactionType = "";
+
+    if (bookRef.docs.length === 0) {
+      transactionType = false;
+    } else {
+      bookRef.docs.map((doc) => {
+        transactionType = doc.data().is_book_available ? "issue" : "return";
+      });
+    }
+    return transactionType;
+  };
+
+  checkStudentEligibilityForBookIssue = async (studentId) => {
+    const studentRef = await db
+      .collection("students")
+      .where("student_id", "==", studentId)
+      .get();
+
+    var isStudentEligible = "";
+
+    if (studentRef.docs.length == 0) {
+      this.setState({
+        bookId: "",
+        studentId: "",
+      });
+
+      isStudentEligible = false;
+      if (Platform.OS === "web") {
+        alert("El id no se encuentra en la base de datos");
+      }
+      Alert.alert("El id no se encuentra en la base de datos");
+    } else {
+      studentRef.docs.map((doc) => {
+        if (doc.data().number_of_books_issued < 2) {
+          isStudentEligible = true;
+        } else {
+          isStudentEligible = false;
+          if (Platform.OS === "web") {
+            alert("El alumno tiene 2 libros");
+          }
+          Alert.alert("El alumno tiene 2 libros");
+          this.setState({
+            bookId: "",
+            studentId: "",
+          });
+        }
+      });
+    }
+
+    return isStudentEligible;
+  };
+
+  checkStudentEligibilityForBookReturn = async (bookId, studentId) => {
+    const transactionRef = await db
+      .collection("transactions")
+      .where("book_id", "==", bookId)
+      .limit(1)
+      .get();
+
+    var isStudentEligible = "";
+
+    transactionRef.docs.map((doc) => {
+      var lastBookTransaction = doc.data();
+
+      if (lastBookTransaction.student_id === studentId) {
+        isStudentEligible = true;
+      } else {
+        isStudentEligible = false;
+        if (Platform.OS === "web") {
+          alert("El libro no fue solicitado por este alumno");
+        }
+        Alert.alert("El libro no fue solicitado por este alumno");
+        this.setState({
+          bookId: "",
+          studentId: "",
+        });
+      }
+    });
+    return isStudentEligible;
+  };
+
   render() {
     const { bookId, studentId, domState, scanned } = this.state;
     if (domState !== "normal") {
@@ -215,50 +293,52 @@ export default class TransactionScreen extends Component {
       );
     }
     return (
-      <ImageBackground source={bgImage} style={styles.bgImage}>
-        <View style={styles.upperContainer}>
-          <Image source={appIcon} style={styles.appIcon} />
-          <Image source={appName} style={styles.appName} />
-        </View>
-        <View style={styles.lowerContainer}>
-          <View style={styles.textinputContainer}>
-            <TextInput
-              style={styles.textinput}
-              placeholder={"Book Id"}
-              placeholderTextColor={"#FFFFFF"}
-              value={bookId}
-              onChangeText={(text) => this.setState({ bookId: text })}
-            />
+      <KeyboardAvoidingView behavior="padding" style={styles.container}>
+        <ImageBackground source={bgImage} style={styles.bgImage}>
+          <View style={styles.upperContainer}>
+            <Image source={appIcon} style={styles.appIcon} />
+            <Image source={appName} style={styles.appName} />
+          </View>
+          <View style={styles.lowerContainer}>
+            <View style={styles.textinputContainer}>
+              <TextInput
+                style={styles.textinput}
+                placeholder={"Book Id"}
+                placeholderTextColor={"#FFFFFF"}
+                value={bookId}
+                onChangeText={(text) => this.setState({ bookId: text })}
+              />
+              <TouchableOpacity
+                style={styles.scanbutton}
+                onPress={() => this.getCameraPermissions("bookId")}
+              >
+                <Text style={styles.scanbuttonText}>Escanear</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={[styles.textinputContainer, { marginTop: 25 }]}>
+              <TextInput
+                style={styles.textinput}
+                placeholder={"Student Id"}
+                placeholderTextColor={"#FFFFFF"}
+                value={studentId}
+                onChangeText={(text) => this.setState({ studentId: text })}
+              />
+              <TouchableOpacity
+                style={styles.scanbutton}
+                onPress={() => this.getCameraPermissions("studentId")}
+              >
+                <Text style={styles.scanbuttonText}>Escanear</Text>
+              </TouchableOpacity>
+            </View>
             <TouchableOpacity
-              style={styles.scanbutton}
-              onPress={() => this.getCameraPermissions("bookId")}
+              style={[styles.button, { marginTop: 25 }]}
+              onPress={this.handleTransaction}
             >
-              <Text style={styles.scanbuttonText}>Scan</Text>
+              <Text style={styles.buttonText}>Enviar</Text>
             </TouchableOpacity>
           </View>
-          <View style={[styles.textinputContainer, { marginTop: 25 }]}>
-            <TextInput
-              style={styles.textinput}
-              placeholder={"Student Id"}
-              placeholderTextColor={"#FFFFFF"}
-              value={studentId}
-              onChangeText={(text) => this.setState({ studentId: text })}
-            />
-            <TouchableOpacity
-              style={styles.scanbutton}
-              onPress={() => this.getCameraPermissions("studentId")}
-            >
-              <Text style={styles.scanbuttonText}>Scan</Text>
-            </TouchableOpacity>
-          </View>
-          <TouchableOpacity
-            style={[styles.button, { marginTop: 25 }]}
-            onPress={this.handleTransaction}
-          >
-            <Text style={styles.buttonText}>Submit</Text>
-          </TouchableOpacity>
-        </View>
-      </ImageBackground>
+        </ImageBackground>
+      </KeyboardAvoidingView>
     );
   }
 }
